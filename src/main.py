@@ -118,7 +118,7 @@ class ContractAnalysis(BaseModel):
     summary: Summary
     categories: List[CategoryScore]
     topRisks: List[TopRisk]
-    document: Dict[str, object]   # { "title": ..., "sections": [...] }
+    document: Dict[str, object]
     improvements: List[Improvement]
     changes: List[Change]
     report: Report
@@ -151,7 +151,6 @@ class HealthResponse(BaseModel):
 async def call_llm(contract_text: str) -> Dict:
     """
     Placeholder function used instead of a real LLM.
-    Uses simple heuristics to generate fake-but-consistent analysis.
     """
     return make_dummy_analysis(contract_text)
 
@@ -159,9 +158,6 @@ async def call_llm(contract_text: str) -> Dict:
 # ---------- Simple analyzer & dummy data ----------
 
 def make_dummy_analysis(text: str) -> Dict:
-    """
-    Very simple heuristic just so the UI works even without a real model.
-    """
     t = text.lower()
     if "unlimited liability" in t:
         risk_level: RiskLevel = "high"
@@ -215,7 +211,7 @@ def make_dummy_analysis(text: str) -> Dict:
                 {
                     "id": "s1",
                     "heading": "Full text",
-                    "text": text[:5000],
+                    "text": text,  # ← FULL TEXT, no truncation
                     "riskLevel": risk_level,
                     "riskTags": ["liability"] if risk_level != "low" else [],
                     "issues": (
@@ -302,7 +298,7 @@ def make_dummy_analysis(text: str) -> Dict:
     }
 
 
-# ---------- Text extraction (in-memory only) ----------
+# ---------- Text extraction ----------
 
 def extract_text_from_file(upload: UploadFile) -> str:
     filename = upload.filename or ""
@@ -335,13 +331,12 @@ app = FastAPI(title="RedGuard Backend", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Very simple in-memory storage; fine for hackathon/demo
 CONTRACTS: Dict[str, ContractAnalysis] = {}
 FEEDBACK: Dict[str, List[FeedbackRequest]] = {}
 
@@ -354,11 +349,12 @@ async def healthz():
 @app.post("/api/contracts/analyze", response_model=ContractAnalysis)
 async def analyze_contract(file: UploadFile = File(...)):
     text = extract_text_from_file(file)
+
     if len(text) < 50:
         raise HTTPException(status_code=400, detail="Document too short")
 
-    # Truncate for latency; adjust as needed
-    text = text[:20000]
+    # NO TRUNCATION HERE
+    # text = text[:20000]
 
     llm_result = await call_llm(text)
 
