@@ -2,7 +2,6 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Dict
-import httpx
 import os
 from uuid import uuid4
 from datetime import datetime
@@ -147,80 +146,14 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-# ---------- LLM client ----------
-
-# Set these in OpenShift Deployment (or via `oc set env`)
-MODEL_ENDPOINT = os.getenv("MODEL_ENDPOINT")  # e.g. http://granite-service:8000
-MODEL_API_KEY = os.getenv("MODEL_API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "granite-3-1-8b-instruct")
-
-SYSTEM_PROMPT = """
-You are an AI contract risk analyzer for the RedGuard system.
-Given a contract, you must:
-1) assign an overall risk level: "low", "medium" or "high",
-2) compute a numeric riskScore 0-100,
-3) list dangerous or unusual clauses with short explanations,
-4) group issues into categories: Liability, Payment Terms, Termination, IP Rights, etc.,
-5) propose safer wording where relevant,
-6) generate a short audit report.
-
-Return strictly JSON with this structure:
-
-{
-  "summary": { ... },
-  "categories": [ ... ],
-  "topRisks": [ ... ],
-  "document": { ... },
-  "improvements": [ ... ],
-  "changes": [ ... ],
-  "report": { ... }
-}
-
-Do NOT include Markdown, text outside JSON, or explanations.
-"""
-
+# ---------- Placeholder "LLM" client (dummy for now) ----------
 
 async def call_llm(contract_text: str) -> Dict:
     """
-    Calls the OpenAI-compatible vLLM endpoint on RHOAI.
-    If MODEL_ENDPOINT is not set, falls back to dummy analysis so you can dev locally.
+    Placeholder function used instead of a real LLM.
+    Uses simple heuristics to generate fake-but-consistent analysis.
     """
-    if not MODEL_ENDPOINT:
-        return make_dummy_analysis(contract_text)
-
-    headers = {"Content-Type": "application/json"}
-    if MODEL_API_KEY:
-        headers["Authorization"] = f"Bearer {MODEL_API_KEY}"
-
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": contract_text},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 1024,
-    }
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{MODEL_ENDPOINT}/v1/chat/completions",
-            json=payload,
-            headers=headers,
-        )
-        try:
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=502, detail=f"Model error: {e}")
-        data = resp.json()
-
-    content = data["choices"][0]["message"]["content"]
-    import json
-
-    try:
-        return json.loads(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Model returned invalid JSON: {e}")
+    return make_dummy_analysis(contract_text)
 
 
 # ---------- Simple analyzer & dummy data ----------

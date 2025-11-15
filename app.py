@@ -1,7 +1,7 @@
 # app.py (root of repo)
 
 import uvicorn
-from app.main import app  # this imports the FastAPI instance from app/main.py
+from src.main import app  # this imports the FastAPI instance from app/main.py
 
 if __name__ == "__main__":
     # S2I Python image will run: python app.py
