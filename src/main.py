@@ -6,6 +6,25 @@ import os
 from uuid import uuid4
 from datetime import datetime
 
+import httpx  # NEW: for async HTTP calls
+
+# ---------- Config ----------
+
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"  # adjust if needed
+DEEPSEEK_MODEL = "deepseek-chat"
+PROMPT_PATH = os.getenv("PROMPT_PATH", "prompt.txt")  # NEW: path to prompt file
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")      # NEW: injected via OpenShift secret
+
+# Load system prompt once at startup
+def load_prompt() -> str:
+    if not os.path.exists(PROMPT_PATH):
+        raise RuntimeError(f"Prompt file not found at {PROMPT_PATH}")
+    with open(PROMPT_PATH, "r", encoding="utf-8") as f:
+        return f.read()
+
+SYSTEM_PROMPT = load_prompt()  # NEW
+
+
 # ---------- Models ----------
 
 RiskLevel = Literal["low", "medium", "high"]
@@ -146,156 +165,69 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-# ---------- Placeholder "LLM" client (dummy for now) ----------
+# ---------- LLM client (DeepSeek) ----------
 
 async def call_llm(contract_text: str) -> Dict:
     """
-    Placeholder function used instead of a real LLM.
+    Call DeepSeek API with system prompt from prompt.txt and contract text
+    as the user message. Return a JSON dict that matches make_dummy_analysis
+    output format (summary, categories, topRisks, document, etc.).
+
+    Here I assume your prompt instructs the model to produce exactly that JSON.
     """
-    return make_dummy_analysis(contract_text)
+    if not DEEPSEEK_API_KEY:
+        raise RuntimeError("DEEPSEEK_API_KEY env var not set")
 
-
-# ---------- Simple analyzer & dummy data ----------
-
-def make_dummy_analysis(text: str) -> Dict:
-    t = text.lower()
-    if "unlimited liability" in t:
-        risk_level: RiskLevel = "high"
-        score = 80
-    elif "as is" in t:
-        risk_level = "medium"
-        score = 65
-    else:
-        risk_level = "low"
-        score = 30
-
-    now = datetime.utcnow().isoformat() + "Z"
-
-    return {
-        "summary": {
-            "overallRisk": risk_level,
-            "riskScore": score,
-            "criticalIssues": 1 if risk_level == "high" else 0,
-            "mediumIssues": 2 if risk_level != "low" else 0,
-            "lowIssues": 1,
-            "recommendation": (
-                "Significant revision required before signing."
-                if risk_level == "high"
-                else "Review recommended before signing."
-            ),
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
         },
-        "categories": [
-            {"name": "Liability", "value": 8},
-            {"name": "Payment Terms", "value": 5},
-            {"name": "Termination", "value": 3},
-            {"name": "IP Rights", "value": 6},
-        ],
-        "topRisks": [
-            {
-                "id": 1,
-                "level": risk_level,
-                "category": "Liability",
-                "title": "Potentially unlimited liability",
-                "description": "Contract may expose the company to broad liability.",
-                "section": "Section 8.2",
-                "impact": (
-                    "Critical financial exposure" if risk_level == "high" else "Moderate exposure"
-                ),
-                "recommendation": "Introduce liability cap aligned with contract value.",
-                "tags": ["liability", "indemnity"],
-            }
-        ],
-        "document": {
-            "title": "Uploaded Contract",
-            "sections": [
-                {
-                    "id": "s1",
-                    "heading": "Full text",
-                    "text": text,  # ← FULL TEXT, no truncation
-                    "riskLevel": risk_level,
-                    "riskTags": ["liability"] if risk_level != "low" else [],
-                    "issues": (
-                        [
-                            {
-                                "id": "iss1",
-                                "type": "liability",
-                                "severity": risk_level,
-                                "snippet": text[:200],
-                                "explanation": "Potentially unfavorable liability language.",
-                                "suggestedFix": "Cap liability and clarify exclusions.",
-                            }
-                        ]
-                        if risk_level != "low"
-                        else []
-                    ),
-                }
-            ],
+        {
+            "role": "user",
+            "content": contract_text,
         },
-        "improvements": [
-            {
-                "id": 1,
-                "category": "Liability",
-                "level": risk_level,
-                "original": "Provider shall be liable for any and all damages...",
-                "improved": "Provider's total liability under this agreement shall be limited to...",
-                "rationale": "Introduces standard commercial liability cap.",
-                "status": "suggested",
-            }
-        ],
-        "changes": [
-            {
-                "id": 1,
-                "type": "modified",
-                "section": "Section 4.1 - Liability",
-                "original": "Provider shall be liable for any and all damages...",
-                "revised": "Provider's total liability under this agreement shall be limited to...",
-                "impact": risk_level,
-                "description": "Added liability cap to protect against unlimited exposure.",
-                "status": "recommended",
-            }
-        ],
-        "report": {
-            "documentInfo": {
-                "name": "Uploaded Contract",
-                "date": None,
-                "parties": [],
-                "reviewDate": now.split("T")[0],
-                "analyst": "RedGuard AI",
-            },
-            "executiveSummary": {
-                "overallRisk": risk_level.capitalize(),
-                "riskScore": score,
-                "criticalIssues": 1 if risk_level == "high" else 0,
-                "mediumIssues": 2 if risk_level != "low" else 0,
-                "lowIssues": 1,
-                "recommendation": (
-                    "Significant revision required before signing."
-                    if risk_level == "high"
-                    else "Review recommended before signing."
-                ),
-            },
-            "issues": [
-                {
-                    "id": 1,
-                    "category": "Liability",
-                    "severity": "Critical" if risk_level == "high" else "Medium",
-                    "title": "Liability exposure",
-                    "status": "Unresolved",
-                    "owner": "Legal",
-                    "dueDate": None,
-                }
-            ],
-            "mitigationPlan": [
-                "Introduce liability cap aligned with contract value.",
-                "Clarify IP ownership of background vs foreground IP.",
-            ],
-            "signingRecommendation": (
-                "Do not sign until high severity issues are resolved."
-                if risk_level == "high"
-                else "Proceed after addressing medium-risk items."
-            ),
-        },
+    ]
+
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": messages,
+        # Optionally:
+        # "response_format": {"type": "json_object"},
+        # "temperature": 0.2,
     }
+
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
+        if resp.status_code != 200:
+            # Log or raise with more detail
+            raise HTTPException(
+                status_code=500,
+                detail=f"DeepSeek API error: {resp.status_code} {resp.text}",
+            )
+
+        data = resp.json()
+
+    # Expecting something like OpenAI-style:
+    # data["choices"][0]["message"]["content"] -> JSON string
+    content = data["choices"][0]["message"]["content"]
+
+    # If model returns JSON as a string, parse it:
+    import json
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError:
+        # If it doesn't return valid JSON, you can either:
+        # - raise an error, or
+        # - fall back to some default structure
+        raise HTTPException(status_code=500, detail="LLM returned invalid JSON")
+
+    return result
 
 
 # ---------- Text extraction ----------
@@ -353,9 +285,7 @@ async def analyze_contract(file: UploadFile = File(...)):
     if len(text) < 50:
         raise HTTPException(status_code=400, detail="Document too short")
 
-    # NO TRUNCATION HERE
-    # text = text[:20000]
-
+    # No truncation here – full text:
     llm_result = await call_llm(text)
 
     contract_id = str(uuid4())
